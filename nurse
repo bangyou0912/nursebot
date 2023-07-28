@@ -1,0 +1,388 @@
+import telebot
+import json
+import drugfinder
+import googlemaps
+import os
+from datetime import datetime, time
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultPhoto
+from apscheduler.schedulers.background import BackgroundScheduler
+import requests
+from os.path import join, dirname
+from dotenv import load_dotenv, find_dotenv
+
+API_TOKEN = '5761762082:AAHOKm5EpvYXYpbfr7iTMGBxU0ZFS1Y6L_U'
+
+bot = telebot.TeleBot(API_TOKEN)
+scheduler = BackgroundScheduler()
+with open('usr_data_base.json', 'r') as f:
+        result_file = json.load(f)
+        print(result_file["6249127324"]["b_bkfst"][0])
+
+usr_drug_dict = {
+       "test_id" :
+       {  
+            'is_initilized' : False,
+            'drink_water' : False,
+            "get_up" : ["06:00"],
+            "b_bkfst" : ["06:00", ['drug1']],
+            "bkfst" : ["07:00"],
+            "a_bkfst" : ["08:30", ['drug2']],
+            "b_lunch" : ["10:30", ['drug3']],
+            "lunch" : ["12:00"],
+            "a_lunch" : ["13:30", ['drug4']],
+            "b_dinner" : ["17:00", ['drug5']],
+            "dinner" : ["18:00"],
+            "a_dinner" : ["19:30", ['drug6']],
+            "sleep" : ["23:00", ['drug7']],
+            "water_time" : "02:00"
+        }
+    }
+
+
+#開始機器人功能
+@bot.message_handler(commands=["start"])
+def message_handler(message):
+    usr_id = message.chat.id
+    if(usr_drug_dict.get(usr_id)  == None):
+        usr_drug_dict[usr_id] = {  
+            'is_initilized' : False,
+            'drink_water' : False,
+            "get_up" : ['',[]],
+            "b_bkfst" : ['',[]],
+            "bkfst" : ['',[]],
+            "a_bkfst" : ['',[]],
+            "b_lunch" : ['',[]],
+            "lunch" : ['',[]],
+            "a_lunch" : ['',[]],
+            "b_dinner" : ['',[]],
+            "dinner" : ['',[]],
+            "a_dinner" : ['',[]],
+            "sleep" : ['',[]],
+            "water_time" : ''
+        }
+        rewriteData()
+    #判斷id 是否有登入資料
+    if(usr_drug_dict[usr_id]['is_initilized'] == False):
+        bot.reply_to(message, """\
+說明：您好,我是您的小護士Bot,很高興為您服務!我可以為您提供服用藥品注意事項、提醒您何時吃藥、喝水等功能。請您在下方輸入平時大約的用餐時間及就寢時間，我將估算最適當的用藥時間並提醒您～
+請問您每日起床、吃早餐、午餐、晚餐以及就寢時間大約是甚麼時候呢?
+(範例輸入 : 06:00 09:00 13:00 18:00 22:00\n輸入範圍: 00:00 ~ 23:59)
+""")
+
+#提醒喝水功能
+@bot.message_handler(commands=['water'])                                                   
+def water(message):
+    reply_markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("是", callback_data="water_btn1"),
+            InlineKeyboardButton("否", callback_data="water_btn2"),
+        ]
+    ])
+    bot.reply_to(message, f'是否需要設定喝水鬧鐘？', reply_markup=reply_markup)
+@bot.callback_query_handler(func=lambda wa: wa.data.startswith('water'))
+def yes_drink(call):
+    if call.data.endswith('btn1'):
+        bot.send_message(text=f'喝水間隔要多久呢？', 
+                            reply_markup = InlineKeyboardMarkup([
+                                [
+                                    InlineKeyboardButton("半小時", callback_data="drink_30"),
+                                    InlineKeyboardButton("1小時", callback_data="drink_60"),
+                                    InlineKeyboardButton("2小時", callback_data="drink_90"),
+                                    InlineKeyboardButton("3小時", callback_data="drink_120"),
+                                ]
+                            ]),
+                            chat_id=call.message.chat.id)
+    elif call.data.endswith('btn2'):
+        usr_drug_dict[call.message.chat.id]['water_time'] = None
+        rewriteData()
+        bot.send_message(text=f'是否要設定服藥時間？',
+                            reply_markup = InlineKeyboardMarkup([
+                                [           
+                                InlineKeyboardButton("是", callback_data="medicine true"),
+                                InlineKeyboardButton("否", callback_data="medicine false"),
+                                ]
+                            ]),
+                            chat_id=call.message.chat.id)
+
+@bot.callback_query_handler(func=lambda cb: cb.data.startswith('data'))
+def time_cb(call):
+    bot.edit_message_text(text=call.message.text,
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id)
+    if call.data == "data_right":
+        bot.send_message(call.message.chat.id, '輸入 /water 以進行下一個設定')
+    if call.data == "data_cancel":
+        bot.send_message(call.message.chat.id, '請重新依次輸入起床, 早餐, 午餐, 晚餐, 就寢的時間\n(範例輸入:  09:30 10:00 12:00 17:00 23:00)')
+        
+
+@bot.callback_query_handler(func=lambda cb: cb.data.startswith('drink'))
+def setDrinkData(call) :
+    bot.edit_message_text(text=call.message.text,
+                            chat_id=call.message.chat.id,
+                            message_id=call.message.message_id)
+    usr_id = call.message.chat.id
+    if(call.data =="drink_30"):
+        usr_drug_dict[usr_id]['water_time'] = '00:30:00'
+        bot.send_message(call.from_user.id, '已開啟提醒')
+        scheduler.add_job(bot.send_message, "interval", seconds = 1800, args=[call.from_user.id, '提醒您,該喝水囉!'], id ="as")
+
+    elif(call.data =="drink_60"):
+        usr_drug_dict[usr_id]['water_time'] = '01:00:00'
+        bot.send_message(call.from_user.id, '已開啟提醒')
+        scheduler.add_job(bot.send_message, "interval", seconds = 3600, args=[call.from_user.id, '提醒您,該喝水囉!'], id ="as")
+    elif(call.data =="drink_90"):
+        usr_drug_dict[usr_id]['water_time'] = '02:00:00'
+        bot.send_message(call.from_user.id, '已開啟提醒')
+        scheduler.add_job(bot.send_message, "interval", seconds = 7200, args=[call.from_user.id, '提醒您,該喝水囉!'], id ="as")
+    elif(call.data =="drink_120"):
+        usr_drug_dict[usr_id]['water_time'] = '03:00:00'
+        bot.send_message(call.from_user.id, '已開啟提醒')
+        scheduler.add_job(bot.send_message, "interval", seconds = 10800, args=[call.from_user.id, '提醒您,該喝水囉!'], id ="as")
+
+    usr_drug_dict[usr_id]['water_time'] = int(call.data[6:])
+    rewriteData()
+    bot.send_message(text=f'是否要設定服藥時間？',
+                        reply_markup = InlineKeyboardMarkup([
+                            [           
+                            InlineKeyboardButton("是", callback_data="medicine true"),
+                            InlineKeyboardButton("否", callback_data="medicine false"),
+                            ]
+                        ]),
+                        chat_id=usr_id,
+                        )
+
+@bot.message_handler(commands=['stop_water'])
+def stopwater(message):
+    usr_drug_dict[message.chat.id]['water_time'] = None
+    bot.send_message(chat_id=message.chat.id,text='已關閉提醒喝水功能')
+    rewriteData()
+
+@bot.callback_query_handler(func=lambda cb: cb.data.startswith('medicine'))
+def medicinetook(call) :
+    bot.edit_message_text(text=call.message.text,
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id)
+    if call.data.endswith('false') :
+        usr_data = usr_drug_dict[call.message.chat.id]
+        bot.send_message(chat_id=call.message.chat.id,text=f'''起床時間({usr_data["get_up"][0]}):{usr_data["get_up"][1]}\n
+早飯前藥物({usr_data["b_bkfst"][0]}):{usr_data["b_bkfst"][1]}\n
+隨早飯藥物({usr_data["bkfst"][0]}):{usr_data["bkfst"][1]}\n
+早飯後藥物({usr_data["a_bkfst"][0]}):{usr_data["a_bkfst"][1]}\n
+午飯前藥物({usr_data["b_lunch"][0]}):{usr_data["b_lunch"][1]}\n
+隨午飯藥物({usr_data["lunch"][0]}):{usr_data["lunch"][1]}\n
+午飯後藥物({usr_data["a_lunch"][0]}):{usr_data["a_lunch"][1]}\n
+晚飯前藥物({usr_data["b_dinner"][0]}):{usr_data["b_dinner"][1]}\n
+隨晚飯藥物({usr_data["dinner"][0]}):{usr_data["dinner"][1]}\n
+晚飯後藥物({usr_data["a_dinner"][0]}):{usr_data["a_dinner"][1]}\n
+睡前藥物(({usr_data["sleep"][0]}): {usr_data["sleep"][1]}
+''')
+
+        #bot.send_message(chat_id=call.message.chat.id,text=f'提醒時間為：')
+        bot.send_message(chat_id=call.message.chat.id,
+            text=f'感謝您的使用！')
+        while(True):
+            recall(call)
+    elif call.data.endswith('true') :
+        bot.send_message(chat_id=call.message.chat.id,
+            text=f'使用 /add 來增加需要的藥物 (範例: /add 藥物)')
+        
+
+
+@bot.message_handler(commands=["routine"])
+def printData(message):
+    usr_data = usr_drug_dict[message.chat.id]
+    bot.send_message(chat_id=message.chat.id,text=f'''用藥行程\n
+起床時間({usr_data["get_up"][0]}):{usr_data["get_up"][1]}\n
+早飯前藥物({usr_data["b_bkfst"][0]}):{usr_data["b_bkfst"][1]}\n
+隨早飯藥物({usr_data["bkfst"][0]}):{usr_data["bkfst"][1]}\n
+早飯後藥物({usr_data["a_bkfst"][0]}):{usr_data["a_bkfst"][1]}\n
+午飯前藥物({usr_data["b_lunch"][0]}):{usr_data["b_lunch"][1]}\n
+隨午飯藥物({usr_data["lunch"][0]}):{usr_data["lunch"][1]}\n
+午飯後藥物({usr_data["a_lunch"][0]}):{usr_data["a_lunch"][1]}\n
+晚飯前藥物({usr_data["b_dinner"][0]}):{usr_data["b_dinner"][1]}\n
+隨晚飯藥物({usr_data["dinner"][0]}):{usr_data["dinner"][1]}\n
+晚飯後藥物({usr_data["a_dinner"][0]}):{usr_data["a_dinner"][1]}\n
+睡前藥物(({usr_data["sleep"][0]}): {usr_data["sleep"][1]}
+''')
+
+
+
+@bot.message_handler(commands=["add"])
+def drugAdder(message):
+    drug_name = message.text[4:]
+    drug_name = drug_name.strip()
+    if(drug_name == ''):
+        bot.reply_to(message, f'/add 後必須輸入藥物名稱')
+    else:
+        side_effect = drugfinder.findSideEffect(drug_name)
+        bot.reply_to(message, f'{drug_name}: {side_effect}')
+        bot.send_message(chat_id=message.chat.id,text='at what time?',reply_markup = InlineKeyboardMarkup([
+                            [
+                                InlineKeyboardButton("飯前", callback_data=f"{drug_name}  b_meal"),
+                                InlineKeyboardButton("隨飯", callback_data=f"{drug_name}  w_meal"),
+                                InlineKeyboardButton("飯後", callback_data=f"{drug_name}  a_meal")
+                            ]
+                            
+                        ]))
+
+@bot.callback_query_handler(func=lambda cb: cb.data.endswith('_meal'))
+def medicinetook(call) :
+    usr_id = call.message.chat.id
+    drug = call.data.split(' ', 1)[0]
+    bot.edit_message_text(text=call.message.text,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id)
+    if call.data.endswith('b_meal') :
+        usr_drug_dict[usr_id]["b_bkfst"][1].append(drug)
+        usr_drug_dict[usr_id]["b_lunch"][1].append(drug)
+        usr_drug_dict[usr_id]["b_dinner"][1].append(drug)
+        bot.send_message(chat_id=call.message.chat.id,
+            text=f'set to before')
+    elif call.data.endswith('w_meal') :
+        usr_drug_dict[usr_id]["bkfst"][1].append(drug)
+        usr_drug_dict[usr_id]["lunch"][1].append(drug)
+        usr_drug_dict[usr_id]["dinner"][1].append(drug)
+        bot.send_message(chat_id=call.message.chat.id,
+            text=f'set to with')
+    elif call.data.endswith('a_meal') :
+        usr_drug_dict[usr_id]["a_bkfst"][1].append(drug)
+        usr_drug_dict[usr_id]["a_lunch"][1].append(drug)
+        usr_drug_dict[usr_id]["a_dinner"][1].append(drug)
+        bot.send_message(chat_id=call.message.chat.id,
+            text=f'set to after')
+    rewriteData()
+    bot.send_message(chat_id=usr_id,text='是否服用於睡前?',reply_markup = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("是", callback_data=f"{drug} true_sleep"),
+                    InlineKeyboardButton('否', callback_data=f"{drug} false_sleep"),
+                ]
+            ]))
+
+@bot.callback_query_handler(func=lambda cb: cb.data.endswith('_sleep'))
+def medicinetook(call) :
+    usr_id = call.message.chat.id
+    drug = drug = call.data.split(' ', 1)[0]
+    if(call.data.endswith('true_sleep')):
+        usr_drug_dict[usr_id]["sleep"][1].append(drug)
+        bot.send_message(chat_id=call.message.chat.id,text='已增加睡前提醒')
+    elif(call.data.endswith('false_sleep')):
+        bot.send_message(chat_id=call.message.chat.id,text='不增加睡前提醒')
+    bot.send_message(chat_id=call.message.chat.id,text='是否繼續增加藥物?',reply_markup = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("是", callback_data=f"medicine true"),
+                        InlineKeyboardButton('否', callback_data=f"medicine false"),
+                    ]
+                ]))
+
+#設定作息
+@bot.message_handler(func = lambda message: True)
+def inputUsersData(message):
+    usr_data = usr_drug_dict[message.chat.id]
+    if(usr_data['is_initilized'] == True):
+        bot.send_message(message.chat.id, "輸入訊息無效")
+    else:
+        #輸入資料存進json
+        time_text = message.text
+        #將時間切開
+        time_str_list = time_text.split(' ')
+        if(len(time_str_list) != 5):
+            bot.send_message(message.chat.id, "不是正確格式")
+            bot.send_message(message.chat.id, "請重新依次輸入起床, 早餐, 午餐, 晚餐, 就寢的時間\n(範例輸入:  09:30 10:00 12:00 17:00 23:00)")
+            return
+        time_list = [] #儲存格式：[[hour1,min1], [hour2,min2]
+        try:
+            #轉換時間格式和確認輸入格ㄓ
+            for time_str in time_str_list:
+                time_data = time.fromisoformat(f'{time_str}:00')
+                time_list.append(time_data)
+        except:
+            bot.send_message(message.chat.id, "不是正確格式(time)")
+            bot.send_message(message.chat.id, "請重新依次輸入起床, 早餐, 午餐, 晚餐, 就寢的時間\n(範例輸入:  09:30 10:00 12:00 17:00 23:00)")
+            return
+        
+        tmp_hr, tmp_min = time_list[0].hour, time_list[0].minute
+        usr_data["get_up"][0] = f'{tmp_hr:0>2d}:{tmp_min:0>2d}'
+        tmp_hr, tmp_min = time_list[1].hour, time_list[1].minute###must ask other
+        usr_data["b_bkfst"][0] = f'{tmp_hr-1:0>2d}:{tmp_min:0>2d}'
+        usr_data["bkfst"][0] = f'{tmp_hr:0>2d}:{tmp_min:0>2d}'
+        usr_data["a_bkfst"][0] = f'{tmp_hr+1:0>2d}:{tmp_min:0>2d}'
+        tmp_hr, tmp_min = time_list[2].hour, time_list[2].minute
+        usr_data["b_lunch"][0] = f'{tmp_hr-1:0>2d}:{tmp_min:0>2d}'
+        usr_data["lunch"][0] = f'{tmp_hr:0>2d}:{tmp_min:0>2d}'
+        usr_data["a_lunch"][0] = f'{tmp_hr+1:0>2d}:{tmp_min:0>2d}'
+        tmp_hr, tmp_min = time_list[3].hour, time_list[3].minute
+        usr_data["b_dinner"][0] = f'{tmp_hr:0>2d}:{tmp_min:0>2d}'
+        usr_data["dinner"][0] = f'{tmp_hr:0>2d}:{tmp_min:0>2d}'
+        usr_data["a_dinner"][0] = f'{tmp_hr+1:0>2d}:{tmp_min:0>2d}'
+        tmp_hr, tmp_min = time_list[4].hour, time_list[4].minute
+        usr_data["sleep"][0] = f'{tmp_hr+1:0>2d}:{tmp_min:0>2d}'
+        
+        rewriteData()
+        bot.send_message(message.chat.id, f"起床:{time_list[0]}\n早餐:{time_list[1]}\n午餐:{time_list[2]}\n晚餐:{time_list[3]}\n就寢:{time_list[4]}")
+        bot.send_message(message.chat.id, """輸入資料是否正確""")
+        reply_markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(text = "yes", callback_data="data_right"),
+                InlineKeyboardButton(text = "no", callback_data="data_cancel"),
+            ]
+        ])
+        bot.reply_to(message, '輸入資料是否正確', reply_markup=reply_markup)
+
+def rewriteData():
+    with open('usr_data_base.json', 'w', encoding='utf-8') as f:
+        json.dump(usr_drug_dict, f, indent=2, sort_keys=False, ensure_ascii=False)
+        f.close()
+
+def recall(call) :
+    with open('usr_data_base.json', 'r') as f:
+        result_file = json.load(f)
+        now=datetime.now()
+        minute = ''
+        time = ''
+        if(now.minute<10):
+            minute = ' ' + str(now.minute)
+        else:
+            minute = now.minute
+        time = str(now.hour) + ':' + str(minute)
+        if((time == result_file["6249127324"]["b_bkfst"][0]) or (time == result_file["6249127324"]["b_lunch"][0]) or (time == result_file["6249127324"]["b_dinner"][0])):
+            bot.send_message(call.message.chat.id,"提醒您，該吃藥囉！")
+            time.sleep(58)
+            return False
+        elif(time == result_file["6249127324"]["bkfst"][0] or (time == result_file["6249127324"]["lunch"][0]) or (time == result_file["6249127324"]["dinner"][0])):
+            bot.send_message(call.message.chat.id,"提醒您，該吃藥囉！")
+            time.sleep(58)
+            return False
+        elif((time == result_file["6249127324"]["a_bkfst"][0]) or (time == result_file["6249127324"]["a_lunch"][0]) or (time == result_file["6249127324"]["a_dinner"][0])):
+            bot.send_message(call.message.chat.id,"提醒您，該吃藥囉！")
+            time.sleep(58)
+            return False
+        elif(call.data.endswith('true_sleep') and time == result_file["6249127324"]["sleep"][0]):
+            bot.send_message(call.message.chat.id,"提醒您，該吃藥囉！")
+            time.sleep(58)
+            return False
+
+
+
+
+"""
+@bot.message_handler(content_types=['location'])
+def welcome(message):
+    dotenv_path = join(dirname(__file__), '.env')
+    load_dotenv(dotenv_path, override=True)  # 設定 override 才會更新變數哦！
+
+    GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY")
+
+    # Client
+
+    # Radar search
+
+    res = requests.get(f"https://maps.googleapis.com/maps/api/place/textsearch/json?query=restaurants%20in%20@{message.location.latitude, message.location.longitude}&key=AIzaSyAfhwSMb1Y8glcuCjmCuGi2v0essrT7Jw0").json()
+    data = []
+    for i in res["results"]:
+        data.append(i['name'])
+    bot.send_message(message.from_user.id, "\n".join(data))
+
+"""
+print('Bot is online!')
+scheduler.start()
+bot.infinity_polling()
