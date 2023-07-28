@@ -1,0 +1,18 @@
+import telebot
+from datetime import datetime
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultPhoto
+import requests, urllib, json
+import urllib.request as req
+
+def findSideEffect(keyword):
+    if keyword.encode( 'UTF-8' ).isalpha():
+        url = f"https://www1.ndmctsgh.edu.tw/pharm/API/MedMainOnline/GetMedSearch?selecttype=EngName&content={keyword}"
+
+    else:
+        url = f"https://www1.ndmctsgh.edu.tw/pharm/API/MedMainOnline/GetMedSearch?selecttype=ChinName&content={urllib.parse.quote(keyword)}"
+    code = requests.get(url).json()
+    if len(code):
+        url = f"https://www1.ndmctsgh.edu.tw/pharm/API/MedDetail/GetMedDetail?orderCode={code[0]['OrderCode']}"
+        return requests.get(url).json()['Aftereffect']
+    else:
+        return "not found"
